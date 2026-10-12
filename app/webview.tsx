@@ -184,10 +184,61 @@ export default function WebViewScreen() {
     setLoading(false);
   };
 
-  // Handle notification messages from WebView
+  const postToWeb = useCallback((payload: Record<string, unknown>) => {
+    const script = `
+      (function() {
+        var data = ${JSON.stringify(payload)};
+        try {
+          window.dispatchEvent(new MessageEvent('message', { data: data }));
+        } catch (e) {}
+        try {
+          document.dispatchEvent(new MessageEvent('message', { data: data }));
+        } catch (e) {}
+        true;
+      })();
+    `;
+    webViewRef.current?.injectJavaScript(script);
+  }, []);
+
+  const handleRequestGeo = useCallback(async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        postToWeb({
+          type: "GEO_ERROR",
+          message: "Location access denied by user",
+        });
+        return;
+      }
+
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      postToWeb({
+        type: "GEO",
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy,
+      });
+    } catch (error) {
+      console.error("Error getting native location:", error);
+      postToWeb({
+        type: "GEO_ERROR",
+        message: "Location information unavailable",
+      });
+    }
+  }, [postToWeb]);
+
+  // Handle messages from WebView (notifications + native GEO for attendance)
   const handleMessage = async (event: any) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
+
+      if (data.type === "REQUEST_GEO") {
+        await handleRequestGeo();
+        return;
+      }
 
       if (data.type === "NOTIFICATION") {
         await handleNotification(data.payload);
